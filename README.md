@@ -1,11 +1,9 @@
 # CompressHuffman
 CompressHuffman is a library to compress isolated records of data in a DB using a shared huffman tree generated from all the records.
 
- This library was created because compressing a single record in a DB using DEFLATE or other methods produces poor compression (5-10%) due to
-high entropy of individual records (due to small size). Compress huffman exploits the low entropy of the entire dataset to produce a huffman tree 
-
-that can compress most individual records with 30-70% compression (depending on data). 
-Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB
+ This library was created because compressing a single record in a DB using DEFLATE or other methods produces poor compression (5-10%) due to high entropy of individual records (due to small size). 
+ 
+ Compress huffman exploits the low entropy of the entire dataset to produce a huffman tree that can compress most individual records with 30-70% compression (depending on data). 
 
 This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
 
@@ -39,6 +37,8 @@ If the distribution and frequency of the symbols in this new data are similar to
 dataset used to generate the huffTree then the compression level will be equally similar.
 
 However if the symbols are different or their frequency is different you will get little to no compression and the records can even be BIGGER due to not having the available symbols in the hufftree and using extra bits to flag uncompressed data.
+
+Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB
 
 CompressHuffman works by finding all the unique symbols in a datset along with their frequency.
 The algorithm then discards all symbols that have a score below 3 (score = freq*symbol Length). 
