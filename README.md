@@ -8,7 +8,7 @@ CompressHuffman is a library to compress isolated records of data in a DB using 
 This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
 
 Usage: 
-feed your dataset (byte[record][recordData] for in memory dataset or Iterable<byte[recordData]> for retrieval from DB to the Constructor.
+feed your dataset byte[record][recordData] for an in memory dataset or Iterable byte[recordData] for retrieval from DB to the Constructor.
 
 You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
 
