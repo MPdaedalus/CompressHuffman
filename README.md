@@ -71,3 +71,31 @@ To rectify this problem the tree is eliminated and converted to a series of arra
  These symbols are then eliminated and a final huffTree built.
  
  This improves compression by a few % but building the huffTree takes more than twice as long as is needs to iterate over the dataset twice and  dummy compress each record.
+ 
+ Here is the results of a benchmark I did:
+
+The dataset was 5.2 million records each containing a sentence from a random wikipedia article. Total Dataset size 594.6MB
+
+Using default config>
+
+HuffTree Generation Time: 219 seconds
+
+Total compressTime: 59 sec, Total DecompressTime: 13 sec, Total Size of all compressed records> 269.6MB
+
+Using> new CompressHuffman(data,CompressHuffman.fastestCompDecompTime());
+
+HuffTree Generation Time: 281 seconds
+
+Total compressTime: 48 sec, Total DecompressTime: 11 sec, Total Size of all compressed records> 322.6MB
+
+Using> new CompressHuffman(data,CompressHuffman.smallestFileSize());
+
+HuffTree Generation Time:273 seconds
+
+Total compressTime: 98 sec, Total DecompressTime: 17 sec, Total Size of all compressed records> 236.6MB
+
+Decompression speed  is about 50MB/sec per core when using fastestCompDecompTime() and 35MB/sec when using smallestFileSize().
+
+This was tested on a intel sandybridge 4 core i5 (no HT) 6MB L3 cache CPU @ 4.5ghz, 1866mhz ram.
+
+You will probably get better performance on CPU with more L3 cache as more of the most used symbols will stay there rather than going to main memory.
