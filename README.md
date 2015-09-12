@@ -12,9 +12,12 @@ feed your dataset (byte[record][recordData] for in memory dataset or Iterable<by
 
 You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
 
-To Store the HuffmanTree for future use without having the generate it again use getHuffData() and store it in a file.
+To Store the HuffmanTree for future use,  use getHuffData() and store it in a file.
 
-Read and feed the byte array to new CompressHuffman(byte[]) at a future date then use can use  compress(byte[]) decompress(byte[]) 
+Note: once you generate the huffTree (huffData) and perform compress operations, that huffTree is required to decompress the data, you will not be able to decompress at a later date without it. Generating a new hufftree will not
+work as the huffTree generation process is not deterministic and will result in an incompatible hufftree.
+
+Read and feed the huffData byte array to new CompressHuffman(byte[]) at a future date then you can use  compress(byte[]) decompress(byte[]) methods.
 
 The default configuration produces a middle of the road compromise between compression level and compress/decompress speed.
 
