@@ -1,10 +1,6 @@
 package org.compHuff;
 
-
-import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.FileReader;
 import java.lang.Thread.State;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -18,28 +14,54 @@ import java.util.zip.Inflater;
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
 import com.googlecode.concurrentlinkedhashmap.EntryWeigher;
 
+/**
+ * CompressHuffman is a library to compress isolated records of data in a DB using a shared huffman tree generated from all the records.
+ * This library was created because compressing a single record in a DB using DEFLATE or other methods produces poor compression (5-10%) due to
+ * high entropy of individual records (due to small size). Compress huffman exploits the low entropy of the entire dataset to produce a huffman tree 
+ * that can compress most individual records with 30-70% compression (depending on data). 
+ * Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB
+ * 
+ * This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Useage: feed you'r dataset (byte[record][recordData] for in memory datset or Iterable<byte[recordData]> for retreival from DB) to the Constructor
+ * You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
+ * 
+ * To Store the HuffmanTree for future use without having the generate it again use getHuffData() and store it in a file
+ * Read and feed the byte array to new CompressHuffman(byte[]) at a future data then use can use  compress(byte[]) decompress(byte[]) 
+ * 
+ * For more info on how the library works and to report bugs visit  https://github.com/MPdaedalus/CompressHuffman
+ * 
+ * @author daedalus 
+ * @version 1.0
+ */
+
 public class CompressHuffman {
-	public int nodeId, maxSymbolLength, symbl2CodLstIdx, defsymbl2CodLstIdx, altCodeIdx, altCodeBytes, removedBytes, highestLevel, totalSymbols;
+	public int nodeId, symbl2CodLstIdx, maxSymbolLength, defsymbl2CodLstIdx, altCodeIdx, altCodeBytes, removedBytes, highestLevel, totalSymbols;
 	public byte[][] codeValues, symbol2Code, defsymbol2Code, defCodeValues,tmpsymbol2Code,tmpCodeValues;
 	public byte[][][] codeIdx2Symbols, defCodeIdx2Symbols, tmpCodeIdx2Symbols;
 	boolean useAltOnly;
+	HuffConfig config;
 	String symbolFile;
 	PriorityQueue<Weight > trees;
 	EntryWeigher<ByteAry, Integer> memoryUsageWeigher = new EntryWeigher<ByteAry, Integer>() {
 		@Override
 		public int weightOf(ByteAry key, Integer value) {
-			long bytes = key.ary.length + 16;
-			return bytes > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) bytes;
+			return key.ary.length + 32;
 		}
 	};
 	ConcurrentMap<ByteAry, Integer>  freqList;
 	public long eightyPCMemory;
 	public static String[] charsByFreq = new String[]{" ","e","t","a","o","i","n","s","r","h","l","d","c","u","m","f","p","g","w","y","b","v","k","x","j","q","z","E","T","A","O","I","N","S","R","H","L","D","C","U","M","F","P","G","W","Y","B","V","K","X","J","Q","Z",",",".","0","1","2","3","4","5","6","7","8","9","'","\"",";",")","(",":","!","?","/","&","-","%","@","$","_","\\","*","=","[","]","+",">","<","^","`","|","~","{","}","¢","£","©","®","°","±","²","³","µ","¼","½","¾","÷"};
-
+	//hash stuff
+    static final long PRIME64_1 = -7046029288634856825L; //11400714785074694791
+    static final long PRIME64_2 = -4417276706812531889L; //14029467366897019727
+    static final long PRIME64_3 = 1609587929392839161L;
+    static final long PRIME64_4 = -8796714831421723037L; //9650029242287828579
+    static final long PRIME64_5 = 2870177450012600261L;
+	
 	private int aryHash(byte[] ary) {
-		int hash = 1;
-		for(byte b : ary) hash = (257 * hash + b);
-		return hash;
+		if(ary.length == 0 ) return 1;
+		return longHash(hash(ary, 0, ary.length, -1640531527));
 	}
 
 	class ByteAry {
@@ -49,9 +71,7 @@ public class CompressHuffman {
 		}
 		@Override
 		public int hashCode() {
-			int hash = 1;
-			for(byte b : ary) hash = (257 * hash + b);
-			return hash;
+			return longHash(hash(ary, 0, ary.length, -1640531527));
 		}
 		@Override
 		public boolean equals(Object obj) {
@@ -75,9 +95,10 @@ public class CompressHuffman {
 		}
 		@Override
 		public int hashCode() {
-			int hash = 1;
-			for(byte b : key) hash = (257 * hash + b);
-			return hash;
+			return longHash(hash(key, 0, key.length, -1640531527));
+//			int hash = 1;
+//			for(byte b : key) hash = (257 * hash + b);
+//			return hash;
 		};
 
 		public TmpNode(long weight, byte[] key) {
@@ -88,6 +109,58 @@ public class CompressHuffman {
 		public long getWeight() {
 			return wt;
 		}
+	}
+/**
+ *  Use max symbolLength of 8, max symbols 10000
+ *  Est. Decompression speed 50-55MB/Sec per core , Est. Compression 45%
+ *  This Setting also produces the lowest memory usage for the Compressor/Decompressor as well as shortest huffTree build time
+ *  Est. HuffTree build speed=3MB/Sec (of dataSet) on quad core CPU, ,  Est. Final HuffData size=100KB-1MB
+ */
+	public static HuffConfig fastestCompDecompTime() {
+		return config(8,10000,2000000000,false,20);
+	}
+	/**
+	 *  Use max symbolLength of 10, max symbols 1 million
+	 *  Est. Decompression speed 30-35MB/Sec per core , Est. Compression 60%
+	 *  This Setting also produces the highest memory usage and longest comp/decompress time for the Compressor/Decompressor 
+	 *  as well as longest huffTree build time
+	 *  Est. HuffTree build speed=2MB/Sec (of dataSet) on quad core CPU,  Est. Final HuffData size=10-20MB
+	 */
+	public static HuffConfig smallestFileSize() {
+		return config(10,1000000,2000000000,false,26);
+	}
+	
+	/**
+	 * With maxSymbolLength and maxSymbols higher values may give better compression at expense of longer compress/decompress time
+	 * and much longer (many times) hufftree generation time.
+	 * 
+	 * @param maxSymbolLength 
+	 * default=9,  Diminishing returns beyond 8.
+	 * @param maxSymbols 
+	 * default=100000, Diminishing returns beyond 1 million 
+	 * @param maxSymbolCacheSize 
+	 * default=2GB, will use half of free memory if less than 2GB available. Bigger symbol cache does not always improve compression beyond 2GB
+	 * @param twoPass 
+	 * default=false, whether to generate dummy hufftree and do dummy compress to eliminate unused symbols, improves compression by a few % 
+	 * but hufftree generation takes twice as long or more, has little effect to comp/decomp time
+	 * @param maxTreeDepth 
+	 * default=20, shorter treeDepth reduces memory needed for huffman Tree but will reduce compression 
+	 * Do not go below indexOf(highest set bit(2 x number of records)) or above 31, or you may get error.
+	 */
+	public static HuffConfig config(int maxSymbolLength, int maxSymbols, long maxSymbolCacheSize, boolean twoPass, int maxTreeDepth) {
+		HuffConfig hc = new HuffConfig();
+		hc.maxSymbolLength = maxSymbolLength;
+		hc.maxSymbols = maxSymbols;
+		hc.maxSymbolCacheSize = maxSymbolCacheSize;
+		hc.twoPass = twoPass;
+		hc.maxTreeDepth = maxTreeDepth;
+		return hc;
+	}
+	
+	static class HuffConfig {
+		int maxSymbolLength, maxSymbols,maxTreeDepth;
+		long maxSymbolCacheSize;
+		boolean twoPass;
 	}
 	//Note: allocating big dataBuffer rather then checking and resizing buffer is faster as long as buffer limit not reached (will cause outofbounds  error)
 	public byte[] deCompress(byte[] codes) {
@@ -177,15 +250,7 @@ public class CompressHuffman {
 			codesIdx += aCode[0];
 			//if symbol not in main tree consult default tree, if not in default tree then just add uncompressed
 			if(curMatchIdx == altCodeIdx) {
-				curMatchIdx =  findSymblIdx(startIdx,endIdx,data,defsymbl2CodLstIdx, defsymbol2Code);
-				if(curMatchIdx != -1) {
-					codesIdx++;
-					aCode = defCodeValues[curMatchIdx];
-					if(((codesIdx+7)/8)+((aCode[0]+7)/8) > codes.length) codes = expand(codes,(aCode[0]+7)/8);
-					codes = addSymbolToCodes(codes,codesIdx,aCode);
-					codesIdx += aCode[0];
-					startIdx+=defsymbol2Code[curMatchIdx].length;
-				} else {
+				if(useAltOnly) {
 					if(((codesIdx+16)/8) > codes.length) codes = expand(codes,2);
 					//set raw bit to true and add byte without compression
 					codes[codesIdx/8] |= 1 << (codesIdx &7);
@@ -195,6 +260,26 @@ public class CompressHuffman {
 						codesIdx++;
 					}
 					startIdx++;
+				} else {
+					curMatchIdx =  findSymblIdx(startIdx,endIdx,data,defsymbl2CodLstIdx, defsymbol2Code);
+					if(curMatchIdx != -1) {
+						codesIdx++;
+						aCode = defCodeValues[curMatchIdx];
+						if(((codesIdx+7)/8)+((aCode[0]+7)/8) > codes.length) codes = expand(codes,(aCode[0]+7)/8);
+						codes = addSymbolToCodes(codes,codesIdx,aCode);
+						codesIdx += aCode[0];
+						startIdx+=defsymbol2Code[curMatchIdx].length;
+					} else {
+						if(((codesIdx+16)/8) > codes.length) codes = expand(codes,2);
+						//set raw bit to true and add byte without compression
+						codes[codesIdx/8] |= 1 << (codesIdx &7);
+						codesIdx++;
+						for(int q=0; q<8; q++) {
+							if(((data[startIdx] >> q) & 1)== 1)  codes[codesIdx/8] |= 1 << (codesIdx &7);
+							codesIdx++;
+						}
+						startIdx++;
+					}
 				}
 			} else {
 				startIdx+=symbol2Code[curMatchIdx].length;
@@ -223,14 +308,14 @@ public class CompressHuffman {
 		}
 		return codes;
 	}
-	//TODO redo start searching from maxsymbolLen down rather than from 0 up to reduce iterations (this method takes up majority of compression time)
+	// (this method takes up majority of compression time)
 	private int findSymblIdx(int startIdx, int endIdx, byte[] data, int symbLastIdx, byte[][] symKeySet) {
 		int hash = 1;
 		int curMatchIdx = -1;
 		int symbolIdx, tmpIdx;
 		byte[] aKey;
 		for(int i=startIdx; i<endIdx; i++) {
-			hash = (257*hash + data[i]);
+			hash = longHash(hash(data, startIdx, (i-startIdx)+1, -1640531527));
 			symbolIdx = hash & symbLastIdx;
 			probe: while((aKey =symKeySet[symbolIdx]) != null) {
 				tmpIdx = symbolIdx;
@@ -246,76 +331,6 @@ public class CompressHuffman {
 		return curMatchIdx;
 	}
 	
-	
-//		private int findSymblIdx(int startIdx, int endIdx, byte[] data, int symbLastIdx, byte[][] symKeySet) {
-//			int hash = 1;
-//			int curMatchIdx = -1;
-//			int symbolIdx, tmpIdx;
-//			byte[] aKey;
-//			while(endIdx > startIdx) {
-//				for(int i=startIdx; i<endIdx; i++) {
-//					hash = (257*hash + data[i]);
-//				}
-//					symbolIdx = hash & symbLastIdx;
-//					probe: while((aKey =symKeySet[symbolIdx]) != null) {
-//						tmpIdx = symbolIdx;
-//						if(++symbolIdx == symKeySet.length) symbolIdx = 0;
-//						if(aKey.length == endIdx-startIdx) {
-//							for(int w=0; w<aKey.length; w++) if(aKey[w] != data[startIdx+w]) continue probe; 
-//						} else {
-//							continue;
-//						}
-//						curMatchIdx = tmpIdx;
-//					}
-//				if(curMatchIdx != -1) return curMatchIdx;
-//				endIdx--;
-//			}
-//			return curMatchIdx;
-//		}
-
-	public CompressHuffman(String symbolFile) {
-		altCprsFromSymbolFile(symbolFile);
-	}
-
-	public void altCprsFromSymbolFile(String symbolFile) {
-		BufferedReader br; 
-		try {
-			br = new BufferedReader(new FileReader(new File(symbolFile)));
-			this.symbolFile = symbolFile;
-			trees = new PriorityQueue<Weight>();
-			//check if weights are present
-			String line = br.readLine();
-			int weight;
-			if(line.trim().split("//s+").length > 1) {
-				String[] tuple = line.trim().split("//s+");
-				weight = Integer.parseInt(tuple[1]);
-				byte[]  symBytes = tuple[0].getBytes();
-				trees.add(new TmpNode(weight, symBytes));
-				while((line = br.readLine()) != null) {
-					tuple = line.trim().split("//s+");
-					weight = Integer.parseInt(tuple[1]);
-					symBytes = tuple[0].getBytes();
-					trees.add(new TmpNode(weight, symBytes));
-				}
-			} else {
-				weight = 1000000;
-				trees.add(new TmpNode(weight--, line.trim().getBytes()));
-				while((line = br.readLine()) != null) trees.add(new TmpNode(weight--, line.trim().getBytes()));
-			}
-			buildHuffTree(true,false);
-			useAltOnly = true;
-		}catch(Exception e) {
-			e.printStackTrace();
-			System.err.println("CompressHuffman: Creation Failed!");
-		}
-	}
-
-	public CompressHuffman() {
-		buildAltTree(true);
-		useAltOnly = true;
-	}
-
-
 	class RawData implements Iterable<byte[]> {
 		private byte[][] data;
 		private int len;
@@ -341,57 +356,87 @@ public class CompressHuffman {
 			return new ByteIter();
 		}
 	}
-
-	public CompressHuffman(byte[][] data, int maxSymbolLength, boolean onlyUseAltCompression) {
-		generateHuffData(new RawData(data),maxSymbolLength,onlyUseAltCompression);
+	/**
+	 * Construct Huffman Tree using maxSymbol Size of 9, max number of symbols 100000, max Tree depth of 20
+	 * These settings are a good tradeoff between comp/decompress speed and compression level
+	 * Est. Decompression speed 40-45MB/Sec per core , Est. Compression 55%
+	 * Est. HuffTree build speed=2-3MB/Sec (of dataSet) on quad core CPU,  Est. Final HuffData size=1-2MB
+	 * @param data
+	 *	The data Set
+	 */
+	public CompressHuffman(byte[][] data) {
+		generateHuffData(new RawData(data),config(9, 100000, Runtime.getRuntime().freeMemory()/2 < 2000000000 ? Runtime.getRuntime().freeMemory()/2 : 2000000000, false, 20));
+	}
+	/**
+	 * 
+	 * @param data
+	 * The data Set
+	 * @param hc
+	 * Config File (see config() method docs)
+	 */
+	public CompressHuffman(byte[][] data, HuffConfig hc) {
+		generateHuffData(new RawData(data),hc);
+	}
+	
+	/**
+	 * Construct Huffman Tree using maxSymbol Size of 9, max number of symbols 100000, max Tree depth of 20
+	 * These settings are a good tradeoff between comp/decompress speed and compression level
+	 * Est. Decompression speed 40-45MB/Sec per core , Est. Compression 55%
+	 * Est. HuffTree build speed=2-3MB/Sec (of dataSet) on quad core CPU, Est. Final HuffData size=1-2MB
+	 * @param data
+	 *	The data Set
+	 */
+	public CompressHuffman(Iterable<byte[]> data) {
+		generateHuffData(data,config(9, 100000, Runtime.getRuntime().freeMemory()/2 < 2000000000 ? Runtime.getRuntime().freeMemory()/2 : 2000000000, false, 20));
 	}
 
-	public void generateHuffData(Iterable<byte[]> data, int maxSymbolLength, boolean onlyUseAltCompression) {
-		if(onlyUseAltCompression) {
-			useAltOnly = true;
-			buildAltTree(true);
-		} else {
+	public void generateHuffData(Iterable<byte[]> data, HuffConfig hc) {
+		System.out.println("Compress Huffman: Building hufftree");
+		config = hc;
+		this.maxSymbolLength = hc.maxSymbolLength > 30 ? 30 : hc.maxSymbolLength;
+			freqList = new ConcurrentLinkedHashMap.Builder<ByteAry ,Integer>().maximumWeightedCapacity(config.maxSymbolCacheSize).weigher(memoryUsageWeigher)
+					.concurrencyLevel(Runtime.getRuntime().availableProcessors()*8).initialCapacity(config.maxSymbolCacheSize > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) config.maxSymbolCacheSize).build();
 			useAltOnly = false;
-			setSymbCache(maxSymbolLength);
-			generateSymbolFreqs(data,false);
-			freqToTree(1,false);
-			buildHuffTree(false,false);
-			freqList.clear();
-			generateSymbolFreqs(data,true);
-			//generateSymbolFreqs(data,true,false);
-			freqToTree(1,true);
-			buildHuffTree(false,true);
+			if(hc.twoPass) {
+				System.out.println("Compress Huffman: compiling symbol freq, Stage one of four");
+				generateSymbolFreqs(data,false);
+				System.out.println("Compress Huffman: building dummy huffTree, Stage two of four");
+				freqToTree(1,false);
+				buildHuffTree(false,false);
+				freqList.clear();
+				System.out.println("Compress Huffman: dummy compress to find unused symbols, Stage three of four");
+				generateSymbolFreqs(data,true);
+				System.out.println("Compress Huffman: build final huffTree, Stage four of four");
+				freqToTree(1,true);
+				buildHuffTree(false,true);
+				System.out.println("Compress Huffman: Done building HuffTree! Use getHuffData() to store tree");
+			} else {
+				System.out.println("Compress Huffman: compiling symbol freq, Stage one of two");
+				generateSymbolFreqs(data,false);
+				System.out.println("Compress Huffman: building huffTree Stage two of two");
+				freqToTree(1,true);
+				buildHuffTree(false,true);
+				System.out.println("Compress Huffman: Done building HuffTree! Use getHuffData() to store tree");
+			}
 			altCodeBytes = (codeValues[1][0]+7)/8;
 			switchFields(true);
 			buildAltTree(false);
-		}
 	}
-	//TODO add byte[] iterator
-	public CompressHuffman(Iterable<byte[]> data, int maxSymbolLength, boolean onlyUseAltCompression) {
-		generateHuffData(data,maxSymbolLength,onlyUseAltCompression);
+	/**
+	 * 
+	 * @param data
+	 * The data Set
+	 * @param hc
+	 * Config File (see config() method docs)
+	 */
+	public CompressHuffman(Iterable<byte[]> data, HuffConfig hc) {
+		generateHuffData(data,hc);
 	}
-
-	private void setSymbCache(int maxSymbolLength) {
-		//Int = weight = frequency * symbol  length in bytes
-		if(maxSymbolLength > 255) maxSymbolLength = 255;
-		this.maxSymbolLength = maxSymbolLength;
-		//use 80% of available memory for freqList
-		eightyPCMemory = Runtime.getRuntime().maxMemory();
-		if(eightyPCMemory == Long.MAX_VALUE) eightyPCMemory = Runtime.getRuntime().totalMemory();
-		long usedMemory = Runtime.getRuntime().totalMemory() -Runtime.getRuntime().freeMemory();
-		//sometimes Runtime.getRuntime().totalMemory() -Runtime.getRuntime().freeMemory() will not work properly because of jvm, so play it safe if this happens.
-		if(usedMemory < 100) eightyPCMemory = Runtime.getRuntime().freeMemory();
-		eightyPCMemory  = (((eightyPCMemory-usedMemory)/10)*8)  / (40 * ((maxSymbolLength/2)+36));
-		freqList = new ConcurrentLinkedHashMap.Builder<ByteAry ,Integer>().maximumWeightedCapacity(eightyPCMemory).weigher(memoryUsageWeigher)
-				.concurrencyLevel(Runtime.getRuntime().availableProcessors()*8).initialCapacity((int) eightyPCMemory/maxSymbolLength).build();
-		
-	}
-
+	
+	//convert freqList hashmap to priorty queue ordered by frequency (lowest first)
 	private void freqToTree(int freqDivide, boolean addAltNode) {
-		//int leafCount=0;
-		//int oneFreq = 0;
-		//int overCode = 0;
 		removedBytes  = 1;
+		int maxSymbols = config.maxSymbols;
 		Entry<ByteAry,Integer> ent;
 		trees = new PriorityQueue<Weight>();
 		if(freqDivide < 2) {
@@ -403,6 +448,7 @@ public class CompressHuffman {
 					removedBytes += ent.getValue()*ent.getKey().ary.length;
 				}
 			}
+			while(trees.size() > maxSymbols) trees.poll();
 			if(addAltNode) trees.add(new TmpNode(removedBytes  , new byte[0]));
 		} else {
 			int freq;
@@ -416,6 +462,7 @@ public class CompressHuffman {
 					removedBytes += ent.getValue()*ent.getKey().ary.length;
 				}
 			}
+			while(trees.size() > maxSymbols) trees.poll();
 			if(addAltNode) trees.add(new TmpNode(removedBytes/freqDivide == 0 ? 1 : removedBytes/freqDivide  , new byte[0]));
 		}
 	}
@@ -424,7 +471,7 @@ public class CompressHuffman {
 		if(useDefault || trees.size() == 0) {
 			trees = new PriorityQueue<Weight>();
 			for(int i=0; i<charsByFreq.length; i++) {
-				trees.add(new TmpNode(1000/(charsByFreq[i].length()*5), charsByFreq[i].getBytes()));
+				trees.add(new TmpNode((charsByFreq.length*100)-(i*90), charsByFreq[i].getBytes()));
 			}
 		} 
 		buildHuffTree(true,false);
@@ -437,9 +484,9 @@ public class CompressHuffman {
 		HuffmanTree hn, hf1, hf2;
 		int longTreeId = 0;
 		totalSymbols= trees.size();
-		//int maxTreeDepth = 32 - Integer.numberOfLeadingZeros(totalSymbols*3);
-		int maxTreeDepth =26;
-		// if(maxTreeDepth < 20) maxTreeDepth=20;
+		System.out.println("total symbols=" + totalSymbols);
+		int maxTreeDepth;
+		if(isAlt) { maxTreeDepth = 26; } else { maxTreeDepth=config.maxTreeDepth > 31 ? 31 : config.maxTreeDepth; };
 		int freqDivide = 1;
 		HuffmanTree objectTree;
 		while(true) {
@@ -480,7 +527,7 @@ public class CompressHuffman {
 		symbl2CodLstIdx = symbol2Code.length-1;
 		populateLUTNCodes(((HuffmanNode) objectTree).left,new byte[] {1,0});
 		populateLUTNCodes(((HuffmanNode) objectTree).right,new byte[] {1,1});
-		if(isAlt == false && isFinal == true ) {
+		if(isAlt == false && isFinal == true || freqList == null) {
 			int symbolIdx = (aryHash(new byte[0]) & symbl2CodLstIdx)-1;
 			if(symbolIdx+1 == symbol2Code.length) symbolIdx = -1; 
 			byte[] aKey;
@@ -519,7 +566,7 @@ public class CompressHuffman {
 			populateLUTNCodes(((HuffmanNode) objectTree).left,leftCode);
 			populateLUTNCodes(((HuffmanNode) objectTree).right,rightCode);
 		} else {
-			byte[] symbol = ((HuffmanLeaf) objectTree).value;
+			byte[] symbol = ((HuffmanLeaf) objectTree).val;
 			int bitCount=0;
 			int codeByteIdx=1;
 			int codeV = 0;
@@ -548,7 +595,7 @@ public class CompressHuffman {
 		@Override
 		public void run() {
 			int VLen;
-			Integer weight;
+			Integer weight, oldWeight;
 			byte[] symbol;
 			byte[] dV;
 			ByteAry ba;
@@ -560,10 +607,18 @@ public class CompressHuffman {
 						for(int j=i; j<VLen && j<i+maxSymbolLength; j++) {
 							symbol  = Arrays.copyOfRange(dV, i, j+1);
 							ba = new ByteAry(symbol);
-							weight = freqList.get(ba);
-							if(weight != null) weight+=symbol.length; else weight =  symbol.length;
-							freqList.put(ba, weight);
+							while(true) {
+								oldWeight = freqList.get(ba);
+								if(oldWeight != null) {
+									weight=oldWeight+symbol.length; 
+									if(freqList.replace(ba, oldWeight,weight)) break;
+								} else { 
+									weight =  symbol.length;
+									if(freqList.putIfAbsent(ba, weight) == null) break;
+								}
+							}
 						}
+							
 					}
 				}
 			} catch (InterruptedException e) {
@@ -622,7 +677,7 @@ public class CompressHuffman {
 			}
 		}
 	}
-
+	//setup multithreading
 	private void generateSymbolFreqs(Iterable<byte[]>data, boolean isFindUsed) {
 		int cores = Runtime.getRuntime().availableProcessors();
 		//workQueue = new ArrayBlockingQueue<>(cores*5);
@@ -639,14 +694,18 @@ public class CompressHuffman {
 			workers[i].start();
 		}
 		try {
-			long n = 0;
-			for(byte[] ba : data) if(ba != null) while(!queues[(int) (n++ % cores)].offer(ba));
+			long n = 0, counter = 0;
+			for(byte[] ba : data) {
+				if((counter++ & 131071) == 0)  System.out.println("CompressHuffman: Processed Records=" + counter);
+				if(ba != null) while(!queues[(int) (n++ % cores)].offer(ba));
+			}
 			while(true) {
 				cores=0;
 				for(Thread t : workers) if(t.getState() == State.WAITING) cores++;
 				if(cores == workers.length) break;
 				Thread.sleep(20);
 			}
+			System.out.println("CompressHuffman: Finished Stage, Processed Records=" + counter);
 			for(Thread t : workers) t.interrupt();
 		} catch (InterruptedException e) {
 			e.printStackTrace();
@@ -658,8 +717,8 @@ public class CompressHuffman {
 		v--;
 		v |= v >> 1;
 		v |= v >> 2;
-					v |= v >> 4;
-				v |= v >> 8;
+		v |= v >> 4;
+		v |= v >> 8;
 		v |= v >> 16;
 		v++;
 		return v;
@@ -676,13 +735,13 @@ public class CompressHuffman {
 	}
 
 	abstract class HuffmanTree implements Comparable<Weight>,Weight {
-		public final long frequency; // the frequency of this tree
+		public final long frequency; 
 		public final int id;
 		public HuffmanTree(long freq) { 
 			frequency = freq; 
 			id = nodeId+=2;
 		}
-		// compares on the frequency
+		
 		public int compareTo(Weight w) {
 			return Long.compare(frequency, w.getWeight());
 		}
@@ -693,25 +752,21 @@ public class CompressHuffman {
 	}
 
 	class HuffmanLeaf extends HuffmanTree {
-		public final byte[] value; // the character this leaf represents
-		public HuffmanLeaf(long weight, byte[] val) {
+		public final byte[] val; 
+		public HuffmanLeaf(long weight, byte[] dat) {
 			super(weight);
-			value = val;
+			val = dat;
 		}
 
 	}
 
 	class HuffmanNode extends HuffmanTree {
-		public final HuffmanTree left, right; // subtrees
-		public HuffmanNode(HuffmanTree l, HuffmanTree r) {
-			super(l.frequency + r.frequency);
-			left = l;
-			right = r;
+		public final HuffmanTree left, right; 
+		public HuffmanNode(HuffmanTree lef, HuffmanTree rit) {
+			super(lef.frequency + rit.frequency);
+			left = lef;
+			right = rit;
 		}
-	}
-
-	public CompressHuffman(byte[][] data) {
-		this(data,10,false);
 	}
 
 	private void switchFields(boolean toTmp) {
@@ -765,7 +820,11 @@ public class CompressHuffman {
 		}
 		return out;
 	}
-
+	/**
+	 * 
+	 * @param in
+	 * Stored HuffData from getHuffData()
+	 */
 	public CompressHuffman(byte[] in) {
 		int inIdx = 29, count, hashIdx, codeIdx;
 		byte[] symbol;
@@ -813,7 +872,13 @@ public class CompressHuffman {
 		trees = new PriorityQueue<Weight>();
 		buildAltTree(false);
 	}
-
+	/**
+	 * Retrives the HuffmanTree data for offline storage 
+	 * Feed the returned byte array into new CompressHuffman(byte[]) when you need to compress/decompress after program exit
+	 * Don't call this method before the HuffTree has been generated
+	 * @return
+	 * The HuffmanTree and other internal datastructures
+	 */
 	public byte[] getHuffData() {
 		byte[] out = new byte[(totalSymbols*(maxSymbolLength*10))*500];
 		int count=0, hashIdx;
@@ -884,4 +949,121 @@ public class CompressHuffman {
 		System.arraycopy(src, idx, dest, 0, dest.length);
 		return idx + dest.length;
 	}
+	
+    /**
+     * <p>
+     * Calculates XXHash64 from given {@code byte[]} buffer.
+     * </p><p>
+     * This code comes from <a href="https://github.com/jpountz/lz4-java">LZ4-Java</a> created
+     * by Adrien Grand.
+     * </p>
+     *
+     * @param buf to calculate hash from
+     * @param off offset to start calculation from
+     * @param len length of data to calculate hash
+     * @param seed  hash seed
+     * @return XXHash.
+     */
+    public static long hash(byte[] buf, int off, int len, long seed) {
+        if (len < 0) {
+            throw new IllegalArgumentException("lengths must be >= 0");
+        }
+        if(off<0 || off>=buf.length || off+len<0 || off+len>buf.length){
+            throw new IndexOutOfBoundsException();
+        }
+
+        final int end = off + len;
+        long h64;
+
+        if (len >= 32) {
+            final int limit = end - 32;
+            long v1 = seed + PRIME64_1 + PRIME64_2;
+            long v2 = seed + PRIME64_2;
+            long v3 = seed + 0;
+            long v4 = seed - PRIME64_1;
+            do {
+                v1 += readLongLE(buf, off) * PRIME64_2;
+                v1 = Long.rotateLeft(v1, 31);
+                v1 *= PRIME64_1;
+                off += 8;
+
+                v2 += readLongLE(buf, off) * PRIME64_2;
+                v2 = Long.rotateLeft(v2, 31);
+                v2 *= PRIME64_1;
+                off += 8;
+
+                v3 += readLongLE(buf, off) * PRIME64_2;
+                v3 = Long.rotateLeft(v3, 31);
+                v3 *= PRIME64_1;
+                off += 8;
+
+                v4 += readLongLE(buf, off) * PRIME64_2;
+                v4 = Long.rotateLeft(v4, 31);
+                v4 *= PRIME64_1;
+                off += 8;
+            } while (off <= limit);
+
+            h64 = Long.rotateLeft(v1, 1) + Long.rotateLeft(v2, 7) + Long.rotateLeft(v3, 12) + Long.rotateLeft(v4, 18);
+
+            v1 *= PRIME64_2; v1 = Long.rotateLeft(v1, 31); v1 *= PRIME64_1; h64 ^= v1;
+            h64 = h64 * PRIME64_1 + PRIME64_4;
+
+            v2 *= PRIME64_2; v2 = Long.rotateLeft(v2, 31); v2 *= PRIME64_1; h64 ^= v2;
+            h64 = h64 * PRIME64_1 + PRIME64_4;
+
+            v3 *= PRIME64_2; v3 = Long.rotateLeft(v3, 31); v3 *= PRIME64_1; h64 ^= v3;
+            h64 = h64 * PRIME64_1 + PRIME64_4;
+
+            v4 *= PRIME64_2; v4 = Long.rotateLeft(v4, 31); v4 *= PRIME64_1; h64 ^= v4;
+            h64 = h64 * PRIME64_1 + PRIME64_4;
+        } else {
+            h64 = seed + PRIME64_5;
+        }
+
+        h64 += len;
+
+        while (off <= end - 8) {
+            long k1 = readLongLE(buf, off);
+            k1 *= PRIME64_2; k1 = Long.rotateLeft(k1, 31); k1 *= PRIME64_1; h64 ^= k1;
+            h64 = Long.rotateLeft(h64, 27) * PRIME64_1 + PRIME64_4;
+            off += 8;
+        }
+
+        if (off <= end - 4) {
+            h64 ^= (readIntLE(buf, off) & 0xFFFFFFFFL) * PRIME64_1;
+            h64 = Long.rotateLeft(h64, 23) * PRIME64_2 + PRIME64_3;
+            off += 4;
+        }
+
+        while (off < end) {
+            h64 ^= (buf[off] & 0xFF) * PRIME64_5;
+            h64 = Long.rotateLeft(h64, 11) * PRIME64_1;
+            ++off;
+        }
+
+        h64 ^= h64 >>> 33;
+        h64 *= PRIME64_2;
+        h64 ^= h64 >>> 29;
+        h64 *= PRIME64_3;
+        h64 ^= h64 >>> 32;
+
+        return h64;
+    }
+    
+    static long readLongLE(byte[] buf, int i) {
+        return (buf[i] & 0xFFL) | ((buf[i+1] & 0xFFL) << 8) | ((buf[i+2] & 0xFFL) << 16) | ((buf[i+3] & 0xFFL) << 24)
+                | ((buf[i+4] & 0xFFL) << 32) | ((buf[i+5] & 0xFFL) << 40) | ((buf[i+6] & 0xFFL) << 48) | ((buf[i+7] & 0xFFL) << 56);
+    }
+    
+    static int readIntLE(byte[] buf, int i) {
+        return (buf[i] & 0xFF) | ((buf[i+1] & 0xFF) << 8) | ((buf[i+2] & 0xFF) << 16) | ((buf[i+3] & 0xFF) << 24);
+    }
+    
+    public static int longHash(long h) {
+        //$DELAY$
+        h = h * -7046029254386353131L;
+        h ^= h >> 32;
+        return (int)(h ^ h >> 16);
+    }
 }
+
