@@ -8,7 +8,7 @@ Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as l
 This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
 
 Usage: 
-feed your dataset (byte[record][recordData] for in memory dataset or Iterable<byte[recordData]> for retrieval from DB to the Constructor
+feed your dataset (byte[record][recordData] for in memory dataset or Iterable<byte[recordData]> for retrieval from DB to the Constructor.
 You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
 
 To Store the HuffmanTree for future use without having the generate it again use getHuffData() and store it in a file
