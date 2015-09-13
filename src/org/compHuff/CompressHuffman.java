@@ -32,7 +32,7 @@ import com.googlecode.concurrentlinkedhashmap.EntryWeigher;
  * For more info on how the library works and to report bugs visit  https://github.com/MPdaedalus/CompressHuffman
  * 
  * @author daedalus 
- * @version 1.0
+ * @version 1.1
  */
 
 public class CompressHuffman {
@@ -199,9 +199,13 @@ public class CompressHuffman {
 				} else {
 					codeIdx++;
 					symbolIdx = 0;
-					bitLen = 1;
+					bitLen = 0;
+					symbol = null;
 					//add codes to symbolIdx bit by bit until symbol is found 
-					while((symbol = defCodeIdx2Symbols[bitLen++][symbolIdx = (symbolIdx << 1) | ((byte)((codes[codeIdx/8]) >>> (codeIdx++&7)) & (byte)1)]) == null && codeIdx<codesLen);
+					while(symbol == null && codeIdx<codesLen) {
+						symbolIdx |= ((byte)((codes[codeIdx/8]) >>> (codeIdx++&7)) & (byte)1) << bitLen;
+						symbol = defCodeIdx2Symbols[++bitLen][symbolIdx];
+					}
 					if(symbol == null) {
 						while((symbol = defCodeIdx2Symbols[bitLen++][symbolIdx = (symbolIdx << 1) | 0]) == null);
 						symbolLen = symbol.length;
