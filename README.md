@@ -7,7 +7,8 @@ CompressHuffman is a library to compress isolated records of data in a DB using 
 
 This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
 
-Usage: 
+# Usage
+
 feed your dataset byte[record][recordData] for an in memory dataset or Iterable byte[recordData] for retrieval from DB to the Constructor.
 
 You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
@@ -41,12 +42,14 @@ dataset used to generate the huffTree then the compression level will be equally
 
 However if the symbols are different or their frequency is different you will get little to no compression and the records can even be BIGGER due to not having the available symbols in the hufftree and using extra bits to flag uncompressed data.
 
-Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB
+Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB.
+
+# How it works
 
 CompressHuffman works by finding all the unique symbols in a datset along with their frequency.
 The algorithm then discards all symbols that have a score below 3 (score = freq*symbol Length). 
 
-The list of symbols is then capped at a desired number of symbols, eg 10000, 100000, 1 million, to prevent the hufftree from taking up to many bytes and to speed up compression/decompression.
+The list of symbols is then capped at a desired number of symbols, eg 10000, 100000, 1 million, to prevent the hufftree from taking up too many bytes and to speed up compression/decompression.
 
 A huffman tree is then built from this sorted list of symbols resutling in the highest scoring symbols having the fewest bits and the lowest scoring symbols have the most bits. 
 
@@ -62,7 +65,7 @@ To rectify this problem the tree is eliminated and converted to a series of arra
  
  The codes outputed by the compressor are nothing but a series of variable bit length indexes to the codeIdx2Symbols array.
  
- The decompresor simply adds each bit in the compressed record to a int (symbolIdx) checking codeIdx2Symbols each time to see if a symbol  exists at that index.
+ The decompresor simply adds each bit in the compressed record to an int (symbolIdx) checking codeIdx2Symbols each time to see if a symbol  exists at that index.
  
  This structure does not result in unpredictable branching and so allows the CPU to exploit pipelining resulting in a speed up.
  
@@ -72,11 +75,11 @@ To rectify this problem the tree is eliminated and converted to a series of arra
  
  This improves compression by a few % but building the huffTree takes more than twice as long as is needs to iterate over the dataset twice and  dummy compress each record.
  
- Here is the results of a benchmark I did:
+ # benchmark
+ 
+ Here is the results of a benchmark where the dataset was 5.2 million records each containing a sentence from a random wikipedia article. Total Dataset size 594.6MB
 
-The dataset was 5.2 million records each containing a sentence from a random wikipedia article. Total Dataset size 594.6MB
-
-Using default config>
+Using default config> new CompressHuffman(data);
 
 HuffTree Generation Time: 219 seconds
 
