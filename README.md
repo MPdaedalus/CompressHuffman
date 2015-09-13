@@ -75,7 +75,7 @@ To rectify this problem the tree is eliminated and converted to a series of arra
  
  This improves compression by a few % but building the huffTree takes more than twice as long as is needs to iterate over the dataset twice and  dummy compress each record.
  
- # benchmark
+ # Benchmark
  
  Here is the results of a benchmark where the dataset was 5.2 million records each containing a sentence from a random wikipedia article. Total Dataset size 594.6MB
 
