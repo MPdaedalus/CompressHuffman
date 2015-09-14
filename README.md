@@ -69,7 +69,7 @@ To rectify this problem the tree is eliminated and converted to a series of arra
  
  This structure does not result in unpredictable branching and so allows the CPU to exploit pipelining resulting in a speed up.
  
- There  is also a twopass option (disabled by default) in config() that will create dummy tree and do a dummy compress on each record to find out which symbols are never used.
+ There  is also a twopass option (disabled by default) in config() that will create a dummy tree and do a dummy compress on each record to find out which symbols are never used.
  
  These symbols are then eliminated and a final huffTree built.
  
