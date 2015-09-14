@@ -9,7 +9,7 @@ This library is free to use and is under the apache 2.0 licence, available @ htt
 
 # Usage
 
-feed your dataset byte[record][recordData] for an in memory dataset or Iterable byte[recordData] for retrieval from DB to the Constructor.
+Feed your dataset byte[record][recordData] for an in memory dataset or Iterable byte[recordData] for retrieval from DB to the Constructor.
 
 You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
 
