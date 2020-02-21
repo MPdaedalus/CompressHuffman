@@ -21,7 +21,7 @@ import com.googlecode.concurrentlinkedhashmap.EntryWeigher;
  * that can compress most individual records with 30-70% compression (depending on data). 
  * Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB
  * 
- * This library is free to use and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
+ * This library is free to use for any purpose without attribution and is under the apache 2.0 licence, available @ https://www.apache.org/licenses/LICENSE-2.0
  *
  * Useage: feed you'r dataset (byte[record][recordData] for in memory datset or Iterable<byte[recordData]> for retreival from DB) to the Constructor
  * You can then use compress(byte[]) decompress(byte[])  after the HuffmanTree has been generated.
