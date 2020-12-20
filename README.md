@@ -42,8 +42,6 @@ dataset used to generate the huffTree then the compression level will be equally
 
 However if the symbols are different or their frequency is different you will get little to no compression and the records can even be BIGGER due to not having the available symbols in the hufftree and using extra bits to flag uncompressed data.
 
-Using the VM option -XX:+UseCompressedOops can speed things up by about 10% as long as your heap is <32GB.
-
 # How it works
 
 CompressHuffman works by finding all the unique symbols in a datset along with their frequency.
